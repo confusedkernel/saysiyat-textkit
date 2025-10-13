@@ -1,4 +1,3 @@
-# src/saysiyat_textkit/segmentation.py
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
@@ -6,13 +5,10 @@ import collections
 import pandas as pd
 import regex as re
 
-# packaged loaders (None => built-in data/*)
 from .normalization import normalize_text, tokenize_keep_clitic, load_lexicon
 from .config import load_affixes
 
-# -----------------------------------------------------------------------------
-# Utils
-# -----------------------------------------------------------------------------
+# ------------------------------ small utils ------------------------------
 def _tqdm(iterable, disable=False, desc: str = ""):
     try:
         from tqdm.auto import tqdm
@@ -21,7 +17,6 @@ def _tqdm(iterable, disable=False, desc: str = ""):
         return iterable
 
 def _affix_sets(aff: Dict[str, Any]) -> Tuple[set, set, set]:
-    """Build sets of prefixes, suffixes, infixes from affixes.json 'affix_types'."""
     prefixes, suffixes, infixes = set(), set(), set()
     for key, meta in (aff.get("affix_types") or {}).items():
         k = str(key)
@@ -30,7 +25,6 @@ def _affix_sets(aff: Dict[str, Any]) -> Tuple[set, set, set]:
         elif t == "suffix": suffixes.add(k.lstrip("-"))
         elif t == "infix":  infixes.add(k.strip("-"))
         else:
-            # Heuristic if type missing
             if k.startswith("-") and k.endswith("-"): infixes.add(k.strip("-"))
             elif k.endswith("-"):                     prefixes.add(k[:-1])
             elif k.startswith("-"):                   suffixes.add(k[1:])
@@ -38,15 +32,12 @@ def _affix_sets(aff: Dict[str, Any]) -> Tuple[set, set, set]:
     return prefixes, suffixes, infixes
 
 def _heuristic_split(token: str, prefixes: set, suffixes: set, infixes: set) -> List[str]:
-    """Affix-first greedy split used for weak supervision and rare fallbacks."""
     segs = [token]
-    # single infix split (longest-first)
     for inf in sorted(infixes, key=len, reverse=True):
         if len(segs) == 1 and inf in token[1:-1]:
             L, R = token.split(inf, 1)
             segs = [L, inf, R]
             break
-    # greedy prefix
     changed = True
     while changed:
         changed = False
@@ -55,7 +46,6 @@ def _heuristic_split(token: str, prefixes: set, suffixes: set, infixes: set) -> 
                 segs = [pre, segs[0][len(pre):]] + segs[1:]
                 changed = True
                 break
-    # greedy suffix
     changed = True
     while changed:
         changed = False
@@ -66,9 +56,21 @@ def _heuristic_split(token: str, prefixes: set, suffixes: set, infixes: set) -> 
                 break
     return [s for s in segs if s]
 
-# -----------------------------------------------------------------------------
-# Morfessor train/load
-# -----------------------------------------------------------------------------
+def _format_affixes(parts: List[str], prefixes: set, suffixes: set, infixes: set) -> str:
+    """Pretty print: prefix→'pre-', infix→'-infix-', suffix→'-suf'."""
+    out: List[str] = []
+    for i, s in enumerate(parts):
+        if i == 0 and s in prefixes:
+            out.append(f"{s}-")
+        elif i == len(parts) - 1 and s in suffixes:
+            out.append(f"-{s}")
+        elif s in infixes:
+            out.append(f"-{s}-")
+        else:
+            out.append(s)
+    return " ".join(out)
+
+# ------------------------------ Morfessor ------------------------------
 def _train_morfessor_semisupervised(
     tokens: List[str],
     lex_df: Optional[pd.DataFrame],
@@ -78,8 +80,7 @@ def _train_morfessor_semisupervised(
     import morfessor
     pat = re.compile(r"^[A-Za-z\u00C0-\u024F\u02BC-]+$")
 
-    # Weighted data: lexicon freq if present, else token counts
-    if isinstance(lex_df, pd.DataFrame) and {"form", "freq"} <= set(lex_df.columns):
+    if isinstance(lex_df, pd.DataFrame) and {"form","freq"} <= set(lex_df.columns):
         forms = lex_df["form"].astype(str)
         freqs = pd.to_numeric(lex_df["freq"], errors="coerce").fillna(1).astype(int)
         tally = collections.Counter()
@@ -91,20 +92,17 @@ def _train_morfessor_semisupervised(
         cnt = collections.Counter(w for w in tokens if pat.match(str(w)))
         data = [(c, w) for w, c in cnt.items()]
 
-    # Weak-supervision annotations
     annotations: Dict[str, List[Tuple[str, ...]]] = {}
-    if isinstance(lex_df, pd.DataFrame) and "form" in lex_df.columns:
-        source = lex_df["form"].astype(str).unique()
-    else:
-        # top frequent tokens if no lexicon
-        source = [w for _, w in sorted(data, key=lambda t: -t[0])[:2000]]
-
+    source = (
+        lex_df["form"].astype(str).unique()
+        if isinstance(lex_df, pd.DataFrame) and "form" in lex_df.columns
+        else [w for _, w in sorted(data, key=lambda t: -t[0])[:2000]]
+    )
     for w in _tqdm(source, disable=not show_progress, desc="Affix annotations"):
         hs = _heuristic_split(w, prefixes, suffixes, infixes)
         if len(hs) > 1:
             annotations[w] = [tuple(hs)]
 
-    # Train
     io = morfessor.MorfessorIO()
     model = morfessor.BaselineModel()
     model.load_data(data)
@@ -118,20 +116,17 @@ def _load_morfessor_model(path: str):
     io = mfio.MorfessorIO()
     return io.read_binary_model_file(path)
 
-# -----------------------------------------------------------------------------
-# SymSpell helpers
-# -----------------------------------------------------------------------------
+# ------------------------------ SymSpell ------------------------------
 def _build_symspell_from_lex_df(lex_df: pd.DataFrame):
     from symspellpy.symspellpy import SymSpell
     import tempfile, os
     ss = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
     with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as tmp:
         for _, row in lex_df.iterrows():
-            form = str(row.get("form", "")).strip()
-            if not form:
-                continue
+            form = str(row.get("form","")).strip()
+            if not form: continue
             try:
-                f = int(float(row.get("freq", "") or 0))
+                f = int(float(row.get("freq","") or 0))
             except Exception:
                 f = 0
             tmp.write(f"{form}\t{f}\n")
@@ -147,7 +142,7 @@ def _pick_best_freq_then_distance(suggestions, lex_set, form2freq):
             cands.append((s.term, form2freq.get(s.term, int(getattr(s, "count", 1))), s.distance))
     if not cands:
         return None
-    cands.sort(key=lambda x: (-x[1], x[2], x[0]))  # freq desc, dist asc
+    cands.sort(key=lambda x: (-x[1], x[2], x[0]))
     return cands[0]
 
 def _correct_segment(seg: str, ss, lex_set, form2freq, affix_set) -> str:
@@ -164,11 +159,9 @@ def _safe_whole_token_snap(orig: str, cand: str, ss, lex_set, form2freq,
     from symspellpy.symspellpy import Verbosity
     pool = {}
     for q in (orig, cand):
-        if not q:
-            continue
+        if not q: continue
         for s in ss.lookup(q, Verbosity.ALL, max_edit_distance=max_ed):
-            if s.term not in lex_set:
-                continue
+            if s.term not in lex_set: continue
             freq = form2freq.get(s.term, int(getattr(s, "count", 1)))
             tup = (freq, s.distance)
             prev = pool.get(s.term)
@@ -183,39 +176,64 @@ def _safe_whole_token_snap(orig: str, cand: str, ss, lex_set, form2freq,
     return winner if (winner != orig and w_f >= max(1, o_f) * min_ratio and w_d <= max_dist) else orig
 
 # -----------------------------------------------------------------------------
-# Public API (token-level)
+# Shared core used by both token API and file API
 # -----------------------------------------------------------------------------
-def segment_tokens(
+def _format_affixes(parts: List[str], prefixes: set, suffixes: set, infixes: set) -> str:
+    """
+    Pretty-print morpheme list with affix markup:
+      pre-   → prefix
+      -suf   → suffix
+      -inf-  → infix
+    Everything else prints as-is.
+    """
+    out = []
+    for i, p in enumerate(parts):
+        raw = str(p)
+        if i == 0 and raw in prefixes:
+            out.append(f"{raw}-")
+        elif i == len(parts) - 1 and raw in suffixes:
+            out.append(f"-{raw}")
+        elif raw in infixes:
+            out.append(f"-{raw}-")
+        else:
+            out.append(raw)
+    # collapse spaces (defensive)
+    return " ".join(out).replace("  ", " ").strip()
+
+def _segment_core(
     tokens: List[str],
-    morfessor_model_path: Optional[str] = None,
-    lexicon_path: Optional[str] = None,     # None => packaged
-    affixes_path: Optional[str] = None,     # None => packaged
-    allow_train_if_missing: bool = True,
-    with_correction: bool = True,
-    show_progress: bool = False,
-    save_model_path: Optional[str] = None,
-) -> List[str]:
+    morfessor_model_path: Optional[str],
+    lexicon_path: Optional[str],
+    affixes_path: Optional[str],
+    allow_train_if_missing: bool,
+    show_progress: bool,
+    save_model_path: Optional[str],
+):
     """
-    Segment a list of tokens. Returns space-joined segments per token.
-      1) Use lexicon.seg if available (space or '+' accepted).
-      2) Else Morfessor viterbi_segment (model loaded or trained by default).
-      3) Optional: SymSpell per-segment correction + safe whole-token snap.
+    Loads packaged/override resources, trains or loads Morfessor,
+    builds lexicon segmentation overrides, and returns base morpheme lists.
+
+    Returns:
+      base_parts: List[List[str]]     ← raw morphemes per token (no pretty)
+      lex_df: pd.DataFrame | None
+      seg_override: Dict[str, str]    ← space-joined override per form
+      model: morfessor.BaselineModel
+      prefixes, suffixes, infixes: sets
     """
-    # Load resources
+    # -- resources: lexicon --
     lex_any = load_lexicon(lexicon_path) if (lexicon_path or lexicon_path is None) else None
     if isinstance(lex_any, dict):
-        lex_df = pd.DataFrame([
-            {"form": k, "freq": v.get("freq", 0), "seg": v.get("seg", "")}
-            for k, v in lex_any.items()
-        ])
+        lex_df = pd.DataFrame(
+            [{"form": k, "freq": v.get("freq", 0), "seg": v.get("seg", "")} for k, v in lex_any.items()]
+        )
     else:
-        lex_df = lex_any
+        lex_df = lex_any  # may be None
 
+    # -- resources: affixes --
     aff = load_affixes(affixes_path) if (affixes_path or affixes_path is None) else {"affix_types": {}}
     prefixes, suffixes, infixes = _affix_sets(aff)
-    affix_set = set(prefixes) | set(suffixes) | set(infixes)
 
-    # Morfessor model
+    # -- model: load or train --
     if morfessor_model_path:
         model = _load_morfessor_model(morfessor_model_path)
     else:
@@ -226,20 +244,20 @@ def segment_tokens(
             from morfessor import io as mfio
             mfio.MorfessorIO().write_binary_model_file(str(save_model_path), model)
 
-    # Lexicon overrides
+    # -- lexicon segmentation overrides --
     seg_override: Dict[str, str] = {}
     if isinstance(lex_df, pd.DataFrame) and {"form", "seg"} <= set(lex_df.columns):
         for _, row in lex_df.iterrows():
-            f = str(row["form"])
+            f = str(row.get("form", ""))
             s = str(row.get("seg", "") or "")
-            if s.strip():
-                # allow "a b c" or "a+b+c"; store as space-joined
+            if f and s.strip():
                 seg_override[f] = " ".join(s.replace("+", " ").split())
 
-    # Base segmentation
+    # -- base segmentation (no correction) --
     pat_word = re.compile(r"^[A-Za-z\u00C0-\u024F\u02BC-]+$")
     base_parts: List[List[str]] = []
     for tok in _tqdm(tokens, disable=not show_progress, desc="Morfessor segment"):
+        tok = str(tok)
         if tok in seg_override and seg_override[tok]:
             parts = seg_override[tok].split()
         elif pat_word.match(tok):
@@ -248,49 +266,116 @@ def segment_tokens(
             parts = [tok]
         base_parts.append(parts)
 
-    # Optional correction
+    return base_parts, lex_df, seg_override, model, prefixes, suffixes, infixes
+
+
+# ------------------------------ Public: token API ------------------------------
+def segment_tokens(
+    tokens: List[str],
+    morfessor_model_path: Optional[str] = None,
+    lexicon_path: Optional[str] = None,
+    affixes_path: Optional[str] = None,
+    allow_train_if_missing: bool = True,
+    with_correction: bool = True,
+    show_progress: bool = False,
+    save_model_path: Optional[str] = None,
+    pretty_affixes: bool = True,
+    return_df: bool = False,     # <- set True to get the exact same columns as segment_file_tsv()
+):
+    """
+    Run the same logic as segment_file_tsv, but in-memory on a list of tokens.
+
+    Returns either:
+      - dict with parallel lists: {"segments", "corr_segments", "corr_token"}  (default), or
+      - a DataFrame with columns: sent_id, token, segments, corr_segments, corr_token (if return_df=True)
+    """
+    # Build the same per-token view file API uses
+    per_tok = pd.DataFrame({
+        "sent_id":  [f"s{1:03d}"] * len(tokens),                # single fabricated sentence by default
+        "token_id": list(range(1, len(tokens) + 1)),
+        "token":    [str(t) for t in tokens],
+    })
+
+    # ---- shared computation (train/load once) ----
+    base_parts, lex_df, _seg_override, _model, prefixes, suffixes, infixes = _segment_core(
+        tokens=per_tok["token"].astype(str).tolist(),
+        morfessor_model_path=morfessor_model_path,
+        lexicon_path=lexicon_path,
+        affixes_path=affixes_path,
+        allow_train_if_missing=allow_train_if_missing,
+        show_progress=show_progress,
+        save_model_path=save_model_path,
+    )
+
+    # base string (pretty or plain)
+    base_str = [
+        _format_affixes(parts, prefixes, suffixes, infixes) if pretty_affixes else " ".join(parts)
+        for parts in base_parts
+    ]
+
+    # corrected + safe snap (only if we have a lexicon)
     if with_correction and isinstance(lex_df, pd.DataFrame):
         ss = _build_symspell_from_lex_df(lex_df)
         lex_set = set(lex_df["form"].astype(str))
         form2freq = {}
         for _, row in lex_df.iterrows():
             try:
-                form2freq[str(row["form"])] = int(float(row.get("freq", "") or 0))
+                form2freq[str(row["form"])] = int(float(row.get("freq","") or 0))
             except Exception:
                 form2freq[str(row["form"])] = 0
 
-        out_segs: List[str] = []
-        for tok, parts in _tqdm(list(zip(tokens, base_parts)), disable=not show_progress, desc="Correction"):
+        affix_set = set(prefixes) | set(suffixes) | set(infixes)
+
+        corr_parts: List[List[str]] = []
+        for parts in _tqdm(base_parts, disable=not show_progress, desc="Correction"):
             fixed = [_correct_segment(p, ss, lex_set, form2freq, affix_set) for p in parts]
-            cand = "".join(fixed)
-            snapped = _safe_whole_token_snap(tok, cand, ss, lex_set, form2freq)
-            # Return the *corrected parts* as the segmentation; token snap only affects token surface
-            out_segs.append(" ".join(fixed))
-        return out_segs
+            corr_parts.append(fixed)
 
-    # No correction → join base parts
-    return [" ".join(p) for p in base_parts]
+        corr_str = [
+            _format_affixes(parts, prefixes, suffixes, infixes) if pretty_affixes else " ".join(parts)
+            for parts in corr_parts
+        ]
 
-# -----------------------------------------------------------------------------
-# File API (CLI)
-# -----------------------------------------------------------------------------
+        corr_token: List[str] = []
+        for tok, parts in zip(per_tok["token"].astype(str).tolist(), corr_parts):
+            cand = "".join(parts)
+            corr_token.append(_safe_whole_token_snap(tok, cand, ss, lex_set, form2freq))
+    else:
+        corr_str = base_str[:]
+        corr_token = per_tok["token"].astype(str).tolist()
+
+    if return_df:
+        out_df = per_tok[["sent_id","token"]].copy()
+        out_df["segments"] = base_str
+        out_df["corr_segments"] = corr_str
+        out_df["corr_token"] = corr_token
+        return out_df
+
+    return {
+        "segments": base_str,
+        "corr_segments": corr_str,
+        "corr_token": corr_token,
+    }
+
+# ------------------------------ Public: file API ------------------------------
 def segment_file_tsv(
     infile: Path,
     outfile: Path,
     morfessor_model_path: Optional[str] = None,
-    lexicon_path: Optional[str] = None,     # None => packaged
-    affixes_path: Optional[str] = None,     # None => packaged
+    lexicon_path: Optional[str] = None,
+    affixes_path: Optional[str] = None,
     allow_train_if_missing: bool = True,
     with_correction: bool = True,
     show_progress: bool = True,
     save_model_path: Optional[str] = None,
+    pretty_affixes: bool = True,
 ) -> None:
     """
     Accepts:
-      (A) per-token TSV with 'token'
-      (B) sentence-level TSV with one of: 'corrected_tokens'/'norm_tokens'/'tokens'
+      (A) token TSV with 'token'
+      (B) normalization TSV with one of: 'corrected_tokens' / 'norm_tokens' / 'tokens'
       (C) raw TXT (one sentence per line)
-    Writes TSV with EXACTLY: sent_id, token, segments, corr_segments, corr_token
+    Writes: sent_id, token, segments, corr_segments, corr_token
     """
     head = Path(infile).read_text(encoding="utf-8", errors="ignore")[:2048]
     looks_like_tsv = ("\t" in head)
@@ -301,7 +386,7 @@ def segment_file_tsv(
                 return c
         return None
 
-    # Build per-token view (sent_id, token_id, token)
+    # ---------- Build per-token view (sent_id, token_id, token) ----------
     if looks_like_tsv:
         df = pd.read_csv(infile, sep="\t", dtype=str, keep_default_na=False)
         if "token" in df.columns:
@@ -316,7 +401,7 @@ def segment_file_tsv(
         else:
             col = _choose_token_col(df)
             if col is None:
-                looks_like_tsv = False  # fall back to raw text parse
+                looks_like_tsv = False
             else:
                 if "sent_id" not in df.columns:
                     df = df.copy()
@@ -330,7 +415,6 @@ def segment_file_tsv(
                 per_tok = pd.DataFrame(rows, columns=["sent_id", "token_id", "token"])
 
     if not looks_like_tsv:
-        # raw text
         lines = Path(infile).read_text(encoding="utf-8").splitlines()
         rows = []
         for i, line in enumerate(lines, 1):
@@ -342,69 +426,67 @@ def segment_file_tsv(
 
     tokens = per_tok["token"].astype(str).tolist()
 
-    # Run segmentation (base + optional correction)
-    # We'll compute both uncorrected and corrected to fill both columns.
-    base_only = segment_tokens(
-        tokens,
+    # ---------- Shared core: load/train model once and produce base parts ----------
+    base_parts, lex_df, _seg_override, _model, prefixes, suffixes, infixes = _segment_core(
+        tokens=tokens,
         morfessor_model_path=morfessor_model_path,
         lexicon_path=lexicon_path,
         affixes_path=affixes_path,
         allow_train_if_missing=allow_train_if_missing,
-        with_correction=False,
         show_progress=show_progress,
         save_model_path=save_model_path,
     )
-    corrected = segment_tokens(
-        tokens,
-        morfessor_model_path=morfessor_model_path,  # reuse same path/model decision
-        lexicon_path=lexicon_path,
-        affixes_path=affixes_path,
-        allow_train_if_missing=allow_train_if_missing,
-        with_correction=True,
-        show_progress=False,   # already trained above; correction only
-        save_model_path=None,
-    )
 
-    # For corr_token we need the snap winner; easiest is to rebuild with snap info.
-    # Re-run a light pass to compute corr_token from corrected segments + SymSpell
-    corr_token = tokens[:]  # default: original
-    try:
-        # Only possible if lexicon is available (SymSpell needs it)
-        lex_any = load_lexicon(lexicon_path) if (lexicon_path or lexicon_path is None) else None
-        if isinstance(lex_any, dict):
-            lex_df = pd.DataFrame([
-                {"form": k, "freq": v.get("freq", 0), "seg": v.get("seg", "")}
-                for k, v in lex_any.items()
-            ])
-        else:
-            lex_df = lex_any
+    # Pretty/unpretty helpers (reuse formatting convention across both passes)
+    def _join_pretty(parts: List[str]) -> str:
+        return _format_affixes(parts, prefixes, suffixes, infixes) if pretty_affixes else " ".join(parts)
 
-        if isinstance(lex_df, pd.DataFrame):
-            ss = _build_symspell_from_lex_df(lex_df)
-            lex_set = set(lex_df["form"].astype(str))
-            form2freq = {}
-            for _, row in lex_df.iterrows():
-                try:
-                    form2freq[str(row["form"])] = int(float(row.get("freq", "") or 0))
-                except Exception:
-                    form2freq[str(row["form"])] = 0
+    def _unpretty(seg_str: str) -> List[str]:
+        # turn "ma- -om- root -an" style back into raw morphemes for snapping
+        # (assumes _format_affixes behavior: pre- / -inf- / -suf)
+        chunks = []
+        for tok in seg_str.split():
+            t = tok.strip()
+            if not t:
+                continue
+            # remove surrounding '-' for infixes/suffixes, and trailing '-' for prefixes
+            chunks.append(t.strip("-"))
+        return [c for c in chunks if c]
 
-            prefixes, suffixes, infixes = _affix_sets(
-                load_affixes(affixes_path) if (affixes_path or affixes_path is None) else {"affix_types": {}}
+    # ---------- Base string segments (no correction) ----------
+    base_segments = [_join_pretty(p) for p in base_parts]
+
+    # ---------- Corrected segments + corr_token (SymSpell) ----------
+    if with_correction and isinstance(lex_df, pd.DataFrame) and len(lex_df) > 0:
+        ss = _build_symspell_from_lex_df(lex_df)
+        lex_set = set(lex_df["form"].astype(str))
+        form2freq = {
+            str(row["form"]): (
+                int(float(row.get("freq", "") or 0)) if str(row.get("freq", "")).strip() else 0
             )
-            affix_set = set(prefixes) | set(suffixes) | set(infixes)
+            for _, row in lex_df.iterrows()
+        }
+        affix_set = set(prefixes) | set(suffixes) | set(infixes)
 
-            # produce cand from corrected parts, then safe snap
-            corr_parts = [c.split() for c in corrected]
-            for i, (tok, parts) in enumerate(zip(tokens, corr_parts)):
-                cand = "".join(parts)
-                corr_token[i] = _safe_whole_token_snap(tok, cand, ss, lex_set, form2freq)
-    except Exception:
-        pass  # leave corr_token as original if anything goes wrong
+        # Per-segment correction (freq-first), then snap whole token
+        corr_parts = []
+        corr_token = []
+        for tok, parts in zip(tokens, base_parts):
+            fixed = [_correct_segment(s, ss, lex_set, form2freq, affix_set) for s in parts]
+            corr_parts.append(fixed)
+            cand = "".join(fixed)
+            snapped = _safe_whole_token_snap(tok, cand, ss, lex_set, form2freq)
+            corr_token.append(snapped)
 
+        corr_segments = [_join_pretty(p) for p in corr_parts]
+    else:
+        corr_segments = base_segments[:]
+        corr_token = tokens[:]
+
+    # ---------- Emit file ----------
     out_df = per_tok[["sent_id", "token"]].copy()
-    out_df["segments"] = base_only
-    out_df["corr_segments"] = corrected
+    out_df["segments"] = base_segments
+    out_df["corr_segments"] = corr_segments
     out_df["corr_token"] = corr_token
 
     outfile.parent.mkdir(parents=True, exist_ok=True)
