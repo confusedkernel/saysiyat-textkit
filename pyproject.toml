@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saysiyat-textkit"
+version = "0.1.0"
+description = "saysiyat corpus pipeline: normalization, tokenization, morphological segmentation, and tagging."
+authors = [{name = "Tyler Yeh"}]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "regex>=2023.10.3",
+    "typer>=0.12.0",
+    "pandas>=2.1.0", 
+    "tqdm>=4.66",
+    "morfessor>=2.0.6",
+    "symspellpy>=6.7.7"
+]
+
+[project.scripts]
+stk = "saysiyat_textkit.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+saysiyat_textkit = ["data/*.tsv", "data/*.json"]

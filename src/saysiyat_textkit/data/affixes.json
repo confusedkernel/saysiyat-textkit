@@ -1,0 +1,22 @@
+{
+  "voice_markers": {
+    "=en": {
+      "type": "enclitic",
+      "label": "FOC"
+    },
+    "=an": {
+      "type": "enclitic",
+      "label": "FOC"
+    }
+  },
+  "affix_types": {
+    "ma-": {
+      "type": "prefix",
+      "function": "intransitive"
+    },
+    "ka-": {
+      "type": "prefix",
+      "function": "stative"
+    }
+  }
+}
