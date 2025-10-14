@@ -7,7 +7,7 @@ from importlib.metadata import version, PackageNotFoundError  # py3.8+
 
 def _dist_version():
     # Use your distribution name as declared in pyproject [project].name
-    for dist_name in ("saysiyat_textkit", "saysiyat-textkit"):
+    for dist_name in ("stk"):
         try:
             return version(dist_name)
         except PackageNotFoundError:

@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "saysiyat-textkit"
+name = "stk"
 version = "0.1.0"
 description = "saysiyat corpus pipeline: normalization, tokenization, morphological segmentation, and tagging."
 authors = [{name = "Tyler Yeh"}]
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-stk = "saysiyat_textkit.cli:main"
+stk = "stk.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -28,4 +28,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-saysiyat_textkit = ["data/*.tsv", "data/*.json"]
+stk = ["data/*.tsv", "data/*.json"]

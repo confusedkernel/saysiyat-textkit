@@ -31,7 +31,7 @@ def _tqdm(iterable, disable=False, desc: str = ""):
 
 def _pkg_data_path(filename: str) -> Path:
     """Get path to packaged data file."""
-    with ir.as_file(ir.files("saysiyat_textkit") / "data" / filename) as p:
+    with ir.as_file(ir.files("stk") / "data" / filename) as p:
         return Path(p)
 
 

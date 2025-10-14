@@ -1,4 +1,4 @@
-# saysiyat-textkit
+# stk (saysiyat-textkit)
 
 A small, installable package with both **Python API** and **CLI** for a 3‑stage pipeline:
 
@@ -48,7 +48,7 @@ print(list(zip(tokens, segmented, tags)))
 
 ## Data directory & overrides
 
-The package ships with defaults in `saysiyat_textkit/data/`:
+The package ships with defaults in `stk/data/`:
 
 - `lexicon.tsv` (tab-separated: `form lemma freq  seg	pos	gloss`)
 - `affixes.json` (e.g., focus markers and separators)
@@ -56,7 +56,7 @@ The package ships with defaults in `saysiyat_textkit/data/`:
 **Override precedence** (highest to lowest):
 
 1. CLI argument (`--lexicon`, `--affixes`) or Python arg (`lexicon_path=...`, `affixes_path=...`)
-2. Environment variables: `saysiyat_LEXICON`, `saysiyat_AFFIXES`
+2. Environment variables: `SAYSIYAT_LEXICON`, `SAYSIYAT_AFFIXES`
 3. Built-in package defaults
 
 ### Examples
@@ -96,7 +96,7 @@ stk tag --infile segments.tsv --outfile tagged.tsv \
 ```
 
 ```python
-from saysiyat_textkit import segmentation, tagging
+from stk import segmentation, tagging
 
 segments = segmentation.segment_tokens(tokens,
     morfessor_model_path=None,

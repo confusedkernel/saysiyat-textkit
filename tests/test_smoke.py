@@ -1,6 +1,6 @@
-from saysiyat_textkit.normalization import normalize_and_tokenize
-from saysiyat_textkit.segmentation import segment_tokens
-from saysiyat_textkit.tagging import tag_tokens
+from stk.normalization import normalize_and_tokenize
+from stk.segmentation import segment_tokens
+from stk.tagging import tag_tokens
 
 def test_roundtrip():
     txt = "hiza korkoring ma'rem"
