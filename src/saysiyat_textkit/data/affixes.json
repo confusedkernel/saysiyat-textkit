@@ -1,22 +1,60 @@
 {
-  "voice_markers": {
-    "=en": {
-      "type": "enclitic",
-      "label": "FOC"
-    },
-    "=an": {
-      "type": "enclitic",
-      "label": "FOC"
-    }
-  },
   "affix_types": {
+    "m-": {
+      "type": "prefix",
+      "features": {
+        "VOICE": "AF",
+        "POL": "I"
+      }
+    },
+    "-om-": {
+      "type": "infix",
+      "features": {
+        "VOICE": "AF",
+        "POL": "I"
+      }
+    },
     "ma-": {
       "type": "prefix",
-      "function": "intransitive"
+      "features": {
+        "VOICE": "AF",
+        "POL": "I"
+      }
     },
-    "ka-": {
+    "-en": {
+      "type": "suffix",
+      "features": {
+        "VOICE": "PF",
+        "POL": "I"
+      }
+    },
+    "-i": {
+      "type": "suffix",
+      "features": {
+        "VOICE": "PF",
+        "POL": "II"
+      }
+    },
+    "-an": {
+      "type": "suffix",
+      "features": {
+        "VOICE": "LOC",
+        "POL": "I"
+      }
+    },
+    "si-": {
       "type": "prefix",
-      "function": "stative"
+      "features": {
+        "VOICE": "IF",
+        "POL": "I"
+      }
+    },
+    "-ani": {
+      "type": "suffix",
+      "features": {
+        "VOICE": "IF",
+        "POL": "II"
+      }
     }
   }
 }

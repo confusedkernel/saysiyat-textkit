@@ -202,7 +202,7 @@ def tag_tokens_with_lex(
     return out
 
 # ---------------------------------------------------------------------
-# File-level API (CLI helper) — notebook-parity I/O
+# File-level API (CLI helper)
 # ---------------------------------------------------------------------
 def tag_file_tsv(
     infile: Path,
