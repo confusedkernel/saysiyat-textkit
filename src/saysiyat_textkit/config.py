@@ -20,7 +20,7 @@ def load_lexicon(path: Optional[str] = None) -> pd.DataFrame:
     """
     p = Path(path) if path else _default_path("lexicon.tsv")
     df = pd.read_csv(p, sep="\t", dtype=str, keep_default_na=False)
-    required = {"form", "lemma", "freq", "seg", "pos", "gloss"}
+    required = {"form", "lemma", "freq", "seg", "POS", "gloss"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Lexicon missing columns: {missing}")

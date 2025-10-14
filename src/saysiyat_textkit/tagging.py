@@ -5,8 +5,8 @@ import pandas as pd
 import regex as re
 
 # Reuse your packaged loaders
-from .normalization import load_lexicon  # supports None => built-in data/lexicon.tsv
-from .config import load_affixes         # supports None => built-in data/affixes.json
+from .normalization import load_lexicon
+from .config import load_affixes       # supports None => built-in data/affixes.json
 
 # ---------------------------------------------------------------------
 # Affix inventory & helpers (VOICE table from your earlier spec)
@@ -47,6 +47,52 @@ def _affix_sets_from_json(aff: Dict[str, Any]) -> tuple[set, set, set]:
     suffixes |= SUFFIXES_DEFAULT
     infixes  |= INFIXES_DEFAULT
     return prefixes, suffixes, infixes
+
+def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
+    """
+    Accept dict[str, dict] or a DataFrame. Return (lemma_map, gloss_map, pos_map)
+    with LOWERCASED keys.
+    """
+    if isinstance(lex_any, dict):
+        lemma_map = {k.lower(): str(v.get("lemma", "") or k) for k, v in lex_any.items()}
+        gloss_map = {k.lower(): str(v.get("gloss", "") or "") for k, v in lex_any.items()}
+        pos_map   = {k.lower(): str(v.get("pos",   "") or "") for k, v in lex_any.items()}
+        return lemma_map, gloss_map, pos_map
+
+    # DataFrame branch
+    if isinstance(lex_any, pd.DataFrame):
+        df = lex_any.copy()
+        # normalize column names
+        cols = {c.lower(): c for c in df.columns}
+        form_col  = cols.get("form")  or cols.get("token_corr") or cols.get("token")
+        lemma_col = cols.get("lemma")
+        gloss_col = cols.get("gloss") or cols.get("zh")
+
+        def series_or_empty(c):
+            return df[c].astype(str) if c in df.columns else pd.Series([""] * len(df))
+
+        if not form_col:
+            # nothing usable
+            return {}, {}, {}
+
+        form  = series_or_empty(form_col).fillna("").astype(str)
+        lemma = series_or_empty(lemma_col).fillna("").astype(str) if lemma_col else pd.Series([""] * len(df))
+        gloss = series_or_empty(gloss_col).fillna("").astype(str) if gloss_col else pd.Series([""] * len(df))
+        pos   = series_or_empty(pos_col).fillna("").astype(str)   if pos_col   else pd.Series([""] * len(df))
+
+        lemma_map = {}
+        gloss_map = {}
+        pos_map   = {}
+        for f, l, g, p in zip(form, lemma, gloss, pos):
+            k = str(f).lower()
+            lemma_map[k] = str(l) if str(l).strip() else f
+            gloss_map[k] = str(g) if str(g).strip() else ""
+            pos_map[k]   = str(p) if str(p).strip() else ""
+        return lemma_map, gloss_map, pos_map
+
+    # Unknown type
+    return {}, {}, {}
+
 
 # ---------------------------------------------------------------------
 # Tiny heuristic segmenter (notebook parity; tagging-time only)
@@ -124,82 +170,58 @@ def _tag_segment(seg: str,
 # ---------------------------------------------------------------------
 def tag_tokens_with_lex(
     corr_tokens: List[str],
-    segments: Optional[List[str]] = None,      # optional/ignored; tagging relies on corr_token
-    lexicon_path: Optional[str] = None,        # None => packaged lexicon
-    affixes_path: Optional[str] = None,        # None => packaged affixes
+    segments: Optional[List[str]] = None,
+    lexicon_path: Optional[str] = None,
+    affixes_path: Optional[str] = None,
 ) -> List[Tuple[str, str, str]]:
-    """
-    Notebook-parity tagger:
-      - look up lemma/gloss/POS by corrected token (corr_token) from lexicon
-      - otherwise fall back to heuristic affix-based split to infer coarse POS and compose gloss
-    Returns a list of (pos, lemma, gloss) aligned with corr_tokens.
-    """
-    # Load lexicon (must include columns: form, lemma, pos, gloss)
-    # load_lexicon returns dict[str, {lemma, freq, seg, pos, gloss}] in our package
-    ldict: Dict[str, Dict[str, Any]] = load_lexicon(lexicon_path)
-    # Normalize keys to lowercase for lookup robustness
-    lemma_map = {k.lower(): v.get("lemma") or k for k, v in ldict.items()}
-    gloss_map = {k.lower(): v.get("gloss", "") for k, v in ldict.items()}
-    pos_map   = {k.lower(): v.get("pos", "")   for k, v in ldict.items()}
+    lex_any = load_lexicon(lexicon_path)
+    lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
 
-    # Affixes
     prefixes, suffixes, infixes = _affix_sets_from_json(load_affixes(affixes_path))
 
     out: List[Tuple[str, str, str]] = []
     for tok in corr_tokens:
-        base = tok or ""
-        base_lc = base.lower()
+        base = (tok or "").strip()
+        key = base.lower()
 
-        # 1) Dictionary direct hit → use it
-        if base_lc in pos_map and str(pos_map[base_lc]).strip():
-            pos   = str(pos_map[base_lc]) or ""
-            lemma = str(lemma_map.get(base_lc, base)) or base
-            gloss = str(gloss_map.get(base_lc, "")) or ""
-            out.append((pos, lemma, gloss))
+        lex_pos = (pos_map.get(key, "") or "").strip()
+
+        if lex_pos:
+            # Word has POS in lexicon - use it directly, no guessing
+            lemma = (lemma_map.get(key) or base)
+            gloss = (gloss_map.get(key) or "")
+            out.append((lex_pos, lemma, gloss))
             continue
 
-        # 2) Heuristic segmentation → compose features & gloss
+        # No POS in lexicon → heuristic analysis
         segs = _heuristic_segment_for_tagging(base, prefixes, suffixes, infixes)
-        pos_guess = ""  # X, V, CLIT, etc.
-        focus_vals = set()
-        gloss_parts: List[str] = []
 
+        # Compose gloss parts & decide coarse POS
+        gloss_parts: List[str] = []
         for s in segs:
             lab, feat = _tag_segment(s, prefixes, suffixes, infixes)
-
-            # collect focus values from features
-            if feat.startswith("VOICE="):
-                m = re.search(r"VOICE=([A-Z]+)", feat)
-                if m:
-                    focus_vals.add(m.group(1))
-
-            # gloss composition
-            g = ""
             if lab == "STEM":
-                g = gloss_map.get(s.lower(), s)
-            elif "VOICE" in feat:
+                gloss_parts.append(gloss_map.get(s.lower(), s))
+            elif "VOICE=" in feat:
                 m = re.search(r"VOICE=([A-Z]+)", feat)
                 if m:
-                    g = f"{s} (VOICE: {m.group(1)})"
+                    gloss_parts.append(f"{s} (VOICE: {m.group(1)})")
             elif lab in {"PREF", "INFX", "SUFF"}:
-                g = s
-            if g:
-                gloss_parts.append(g)
+                gloss_parts.append(s)
 
-        # POS fallback
-        if not pos_guess:
-            if base.startswith("="):
-                pos_guess = "CLIT"
-            elif any(_tag_segment(s, prefixes, suffixes, infixes)[0] in {"PREF","INFX","SUFF"} for s in segs):
-                pos_guess = "V"
-            else:
-                pos_guess = "X"
+        if base.startswith("="):
+            pos_guess = "CLIT"
+        elif any(_tag_segment(s, prefixes, suffixes, infixes)[0] in {"PREF", "INFX", "SUFF"} for s in segs):
+            pos_guess = "V"
+        else:
+            pos_guess = "X"
 
-        lemma = lemma_map.get(base_lc, base)
+        lemma = lemma_map.get(key, base)
         gloss = "＋".join(gloss_parts)
         out.append((pos_guess, lemma, gloss))
 
     return out
+
 
 # ---------------------------------------------------------------------
 # File-level API (CLI helper)
@@ -210,27 +232,18 @@ def tag_file_tsv(
     lexicon_path: Optional[str] = None,
     affixes_path: Optional[str] = None,
 ) -> None:
-    """
-    Read a TSV (normally your segmentation output) and write a tagged table:
-      input requires at least: corr_token  (sent_id optional; fabricated if missing)
-      output columns: sent_id, token_orig, token_corr, segs, seg_tags, focus, lemma, pos, gloss
-    """
     df = pd.read_csv(infile, sep="\t", dtype=str, keep_default_na=False)
     if "corr_token" not in df.columns:
         raise ValueError(f"{infile} must have a 'corr_token' column. Got: {list(df.columns)}")
 
     if "sent_id" not in df.columns:
         df = df.copy()
-        df["sent_id"] = [f"s{1 + i // 50:03d}" for i in range(len(df))]  # naive sentence grouping
+        df["sent_id"] = [f"s{1 + i // 50:03d}" for i in range(len(df))]
 
     # Load resources
-    ldict: Dict[str, Dict[str, Any]] = load_lexicon(lexicon_path)
+    lex_any = load_lexicon(lexicon_path)
+    lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
     prefixes, suffixes, infixes = _affix_sets_from_json(load_affixes(affixes_path))
-
-    # Build lex maps (lowercased keys)
-    lemma_map = {k.lower(): v.get("lemma") or k for k, v in ldict.items()}
-    gloss_map = {k.lower(): v.get("gloss", "") for k, v in ldict.items()}
-    pos_map   = {k.lower(): v.get("pos", "")   for k, v in ldict.items()}
 
     rows = []
     for sent_id, sub in df.groupby("sent_id", sort=False):
@@ -238,18 +251,29 @@ def tag_file_tsv(
             tok_disp = tok
             if not tok or tok.isspace():
                 continue
-            base_lc = tok.lower()
 
-            # Dictionary direct hit
-            if base_lc in pos_map and str(pos_map[base_lc]).strip():
-                lemma = lemma_map.get(base_lc, tok)
-                gloss = gloss_map.get(base_lc, "")
-                pos   = pos_map.get(base_lc, "")
-                segs = [tok]
-                seg_tags = [f"{tok}:STEM"]
-                focus_str = ""
+            key = tok.lower()
+            lex_pos = (pos_map.get(key, "") or "").strip()
+
+            if lex_pos:
+                # Word has POS in lexicon - use it directly
+                lemma = lemma_map.get(key, tok)
+                gloss = gloss_map.get(key, "")
+                pos = lex_pos
+                
+                # Skip segmentation for nouns (and any other word with a POS)
+                if lex_pos.upper() in ["N", "NOUN"]:
+                    # No segmentation for nouns
+                    segs = [tok]
+                    seg_tags = [f"{tok}:STEM"]
+                    focus_str = ""
+                else:
+                    # For other POS, keep word intact (no segmentation)
+                    segs = [tok]
+                    seg_tags = [f"{tok}:STEM"]
+                    focus_str = ""
             else:
-                # Heuristic segmentation for tagging-time analysis
+                # No POS in lexicon → heuristic analysis only
                 segs = _heuristic_segment_for_tagging(tok, prefixes, suffixes, infixes)
                 seg_tags: List[str] = []
                 focus_vals = set()
@@ -258,12 +282,10 @@ def tag_file_tsv(
                 for s in segs:
                     lab, feat = _tag_segment(s, prefixes, suffixes, infixes)
                     seg_tags.append(f"{s}:{lab}{('['+feat+']') if feat else ''}")
-
                     if feat.startswith("VOICE="):
                         m = re.search(r"VOICE=([A-Z]+)", feat)
                         if m:
                             focus_vals.add(m.group(1))
-
                     g = ""
                     if lab == "STEM":
                         g = gloss_map.get(s.lower(), s)
@@ -278,9 +300,9 @@ def tag_file_tsv(
 
                 gloss = "＋".join(gloss_parts)
                 focus_str = "|".join(sorted(focus_vals)) if focus_vals else ""
-                lemma = lemma_map.get(base_lc, tok)
+                lemma = lemma_map.get(key, tok)
 
-                # Coarse POS fallback
+                # POS guessing only when no lexicon POS exists
                 if tok.startswith("="):
                     pos = "CLIT"
                 elif any(tag.split(":")[1].startswith(("PREF","INFX","SUFF")) for tag in seg_tags):

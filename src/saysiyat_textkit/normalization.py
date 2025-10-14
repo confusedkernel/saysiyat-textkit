@@ -28,7 +28,7 @@ def load_lexicon(path: Path | str | None) -> dict[str, dict]:
     with f as fh:
         header = fh.readline().rstrip("\n").split("\t")
         # allow both old and new schemas; only take what exists
-        wanted = ["form", "lemma", "freq", "seg", "pos", "gloss"]
+        wanted = ["form", "lemma", "freq", "seg", "POS", "gloss"]
         idx = {name: header.index(name) for name in wanted if name in header}
 
         for line in fh:
@@ -38,7 +38,7 @@ def load_lexicon(path: Path | str | None) -> dict[str, dict]:
 
             def g(name: str) -> str:
                 i = idx.get(name)
-                return cols[i] if (i is not None and i < len(cols)) else ""
+                return cols[i] if (i is not None) else ""
 
             form = g("form")
             if not form:
@@ -57,7 +57,7 @@ def load_lexicon(path: Path | str | None) -> dict[str, dict]:
                     freq = ""
 
             seg = g("seg")
-            pos = g("pos")    # "" if column missing
+            pos = g("POS")    # "" if column missing
             gloss = g("gloss")
 
             lex[form] = {
@@ -67,6 +67,7 @@ def load_lexicon(path: Path | str | None) -> dict[str, dict]:
                 "pos": pos,
                 "gloss": gloss,
             }
+
     return lex
 
 
@@ -134,53 +135,6 @@ def split_sentences(text: str) -> List[str]:
     parts = re.split(r"(?<=[.!?;:])\s+|\n+", text)
     return [p for p in parts if p]
 
-# --------------------------
-# 3) Lexicon + SymSpell helpers (noisy-channel support)
-# --------------------------
-
-
-def load_lexicon(path: Path | str | None) -> dict[str, dict]:
-    """
-    Load TSV lexicon into a dict:
-      form -> {lemma, freq, seg, gloss}
-    If path is None, use the built-in packaged lexicon at data/lexicon.tsv.
-    """
-    if path is None:
-        f = _open_pkg_data("lexicon.tsv")
-    else:
-        f = Path(path).open("r", encoding="utf-8")
-
-    lex: dict[str, dict] = {}
-    with f as fh:
-        header = fh.readline().rstrip("\n").split("\t")
-        idx = {name: header.index(name) for name in [
-            "form", "lemma", "freq", "seg", "gloss"] if name in header}
-        for line in fh:
-            if not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-
-            def g(name: str) -> str:
-                i = idx.get(name)
-                return cols[i] if (i is not None and i < len(cols)) else ""
-
-            form = g("form")
-            lemma = g("lemma") or form
-            freq_raw = g("freq")
-            if freq_raw == "":
-                freq = ""
-            else:
-                try:
-                    freq = int(float(freq_raw))
-                except Exception:
-                    freq = ""
-            seg = g("seg")
-            gloss = g("gloss")
-
-            if form:
-                lex[form] = {"lemma": lemma, "freq": freq,
-                             "seg": seg, "gloss": gloss}
-    return lex
 
 
 def build_symspell_from_lexicon(lexicon: Dict[str, Dict[str, Any]],
