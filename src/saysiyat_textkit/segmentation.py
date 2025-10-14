@@ -6,31 +6,9 @@ import pandas as pd
 import regex as re
 
 from .normalization import normalize_text, tokenize_keep_clitic
-from .utils import load_lexicon, load_affixes
+from .utils import load_lexicon, load_affixes, get_affix_sets, _tqdm
 
-# ------------------------------ small utils ------------------------------
-def _tqdm(iterable, disable=False, desc: str = ""):
-    try:
-        from tqdm.auto import tqdm
-        return tqdm(iterable, disable=disable, desc=desc)
-    except Exception:
-        return iterable
-
-def _affix_sets(aff: Dict[str, Any]) -> Tuple[set, set, set]:
-    prefixes, suffixes, infixes = set(), set(), set()
-    for key, meta in (aff.get("affix_types") or {}).items():
-        k = str(key)
-        t = str((meta or {}).get("type", "")).lower()
-        if   t == "prefix": prefixes.add(k.rstrip("-"))
-        elif t == "suffix": suffixes.add(k.lstrip("-"))
-        elif t == "infix":  infixes.add(k.strip("-"))
-        else:
-            if k.startswith("-") and k.endswith("-"): infixes.add(k.strip("-"))
-            elif k.endswith("-"):                     prefixes.add(k[:-1])
-            elif k.startswith("-"):                   suffixes.add(k[1:])
-            else:                                     prefixes.add(k)
-    return prefixes, suffixes, infixes
-
+# utils
 def _heuristic_split(token: str, prefixes: set, suffixes: set, infixes: set) -> List[str]:
     segs = [token]
     for inf in sorted(infixes, key=len, reverse=True):
@@ -175,9 +153,7 @@ def _safe_whole_token_snap(orig: str, cand: str, ss, lex_set, form2freq,
     o_f = pool.get(orig, (0, 0))[0]
     return winner if (winner != orig and w_f >= max(1, o_f) * min_ratio and w_d <= max_dist) else orig
 
-# -----------------------------------------------------------------------------
-# Shared core used by both token API and file API
-# -----------------------------------------------------------------------------
+# --- Core API ---
 def _format_affixes(parts: List[str], prefixes: set, suffixes: set, infixes: set) -> str:
     """
     Pretty-print morpheme list with affix markup:
@@ -231,7 +207,7 @@ def _segment_core(
 
     # -- resources: affixes --
     aff = load_affixes(affixes_path) if (affixes_path or affixes_path is None) else {"affix_types": {}}
-    prefixes, suffixes, infixes = _affix_sets(aff)
+    prefixes, suffixes, infixes = get_affix_sets(aff) 
 
     # -- model: load or train --
     if morfessor_model_path:
@@ -269,7 +245,7 @@ def _segment_core(
     return base_parts, lex_df, seg_override, model, prefixes, suffixes, infixes
 
 
-# ------------------------------ Public: token API ------------------------------
+# --- token API
 def segment_tokens(
     tokens: List[str],
     morfessor_model_path: Optional[str] = None,

@@ -4,48 +4,8 @@ from typing import List, Tuple, Optional, Dict, Any
 import pandas as pd
 import regex as re
 
+from .utils import load_lexicon, load_affixes, get_affix_sets, get_voice_mappings
 
-from .utils import load_lexicon, load_affixes      # supports None => built-in data/affixes.json
-
-# ---------------------------------------------------------------------
-# Affix inventory & helpers (VOICE table from your earlier spec)
-# ---------------------------------------------------------------------
-# Minimal, notebook-matching sets (you can also derive from affixes.json if you prefer)
-PREFIXES_DEFAULT = {"m", "ma", "si"}                 # AF(I): m-, ma- ; IF(I): si-
-INFIXES_DEFAULT  = {"om"}                            # AF(I): -om-
-SUFFIXES_DEFAULT = {"en", "an", "i", "ani"}          # PF(I): -en ; LOC(I): -an ; PF(II): -i ; IF(II): -ani
-
-VOICE_PREFIX = {"m": ("AF", "I"), "ma": ("AF", "I"), "si": ("IF", "I")}
-VOICE_INFIX  = {"om": ("AF", "I")}
-VOICE_SUFFIX = {"en": ("PF", "I"), "an": ("LOC", "I"), "i": ("PF", "II"), "ani": ("IF", "II")}
-
-DERIV_PREFIX = set()  # e.g. {"ka","pa"} if you later want derivational-only labels
-
-def _affix_sets_from_json(aff: Dict[str, Any]) -> tuple[set, set, set]:
-    """Optional: read sets from affixes.json if present; else fall back to DEFAULTs."""
-    if not aff or "affix_types" not in aff:
-        return set(PREFIXES_DEFAULT), set(SUFFIXES_DEFAULT), set(INFIXES_DEFAULT)
-
-    prefixes, suffixes, infixes = set(), set(), set()
-    for k, meta in aff["affix_types"].items():
-        t = str((meta or {}).get("type", "")).lower()
-        s = str(k)
-        if t == "prefix":
-            prefixes.add(s.rstrip("-"))
-        elif t == "suffix":
-            suffixes.add(s.lstrip("-"))
-        elif t == "infix":
-            infixes.add(s.strip("-"))
-        else:
-            if s.startswith("-") and s.endswith("-"): infixes.add(s.strip("-"))
-            elif s.endswith("-"):                     prefixes.add(s[:-1])
-            elif s.startswith("-"):                   suffixes.add(s[1:])
-            else:                                     prefixes.add(s)
-    # Always make sure our defaults are included
-    prefixes |= PREFIXES_DEFAULT
-    suffixes |= SUFFIXES_DEFAULT
-    infixes  |= INFIXES_DEFAULT
-    return prefixes, suffixes, infixes
 
 def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
     """
@@ -66,7 +26,7 @@ def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict
         form_col  = cols.get("form")  or cols.get("token_corr") or cols.get("token")
         lemma_col = cols.get("lemma")
         gloss_col = cols.get("gloss") or cols.get("zh")
-        pos_col   = cols.get("pos")
+        pos_col   = cols.get("pos") or cols.get("POS")  # Handle both cases
 
         def series_or_empty(c):
             return df[c].astype(str) if c in df.columns else pd.Series([""] * len(df))
@@ -94,9 +54,6 @@ def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict
     return {}, {}, {}
 
 
-# ---------------------------------------------------------------------
-# Tiny heuristic segmenter (notebook parity; tagging-time only)
-# ---------------------------------------------------------------------
 def _heuristic_segment_for_tagging(tok: str,
                                    prefixes: set,
                                    suffixes: set,
@@ -128,14 +85,18 @@ def _heuristic_segment_for_tagging(tok: str,
 
     return [tok]
 
+
 def _tag_segment(seg: str,
                  prefixes: set,
                  suffixes: set,
-                 infixes: set) -> Tuple[str, str]:
+                 infixes: set,
+                 voice_prefix: dict,
+                 voice_infix: dict,
+                 voice_suffix: dict) -> Tuple[str, str]:
     """
     Return (LABEL, FEATURE).
     LABEL ∈ {PREF, INFX, SUFF, STEM, CLITIC, PUNC}
-    FEATURE may encode VOICE and POL when applicable (e.g., "VOICE=AF;POL=I").
+    FEATURE may encode VOICE and POL when applicable (e.g., "VOICE=AV;POL=I").
     """
     s = seg.strip().lower()
     if seg == "=":
@@ -144,30 +105,26 @@ def _tag_segment(seg: str,
         return "PUNC", ""
 
     if s in prefixes:
-        if s in VOICE_PREFIX:
-            v, p = VOICE_PREFIX[s]
+        if s in voice_prefix:
+            v, p = voice_prefix[s]
             return "PREF", f"VOICE={v};POL={p}"
-        if s in DERIV_PREFIX:
-            return "PREF", "DER"
         return "PREF", ""
 
     if s in infixes:
-        if s in VOICE_INFIX:
-            v, p = VOICE_INFIX[s]
+        if s in voice_infix:
+            v, p = voice_infix[s]
             return "INFX", f"VOICE={v};POL={p}"
         return "INFX", ""
 
     if s in suffixes:
-        if s in VOICE_SUFFIX:
-            v, p = VOICE_SUFFIX[s]
+        if s in voice_suffix:
+            v, p = voice_suffix[s]
             return "SUFF", f"VOICE={v};POL={p}"
         return "SUFF", ""
 
     return "STEM", ""
 
-# ---------------------------------------------------------------------
-# Core API — function returns (pos, lemma, gloss) per corr_token
-# ---------------------------------------------------------------------
+
 def tag_tokens_with_lex(
     corr_tokens: List[str],
     segments: Optional[List[str]] = None,
@@ -177,7 +134,10 @@ def tag_tokens_with_lex(
     lex_any = load_lexicon(lexicon_path, return_type="dict")
     lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
 
-    prefixes, suffixes, infixes = _affix_sets_from_json(load_affixes(affixes_path))
+    # Load affixes dynamically from JSON
+    affixes_data = load_affixes(affixes_path)
+    prefixes, suffixes, infixes = get_affix_sets(affixes_data)
+    voice_prefix, voice_infix, voice_suffix = get_voice_mappings(affixes_data)
 
     out: List[Tuple[str, str, str]] = []
     for tok in corr_tokens:
@@ -199,7 +159,7 @@ def tag_tokens_with_lex(
         # Compose gloss parts & decide coarse POS
         gloss_parts: List[str] = []
         for s in segs:
-            lab, feat = _tag_segment(s, prefixes, suffixes, infixes)
+            lab, feat = _tag_segment(s, prefixes, suffixes, infixes, voice_prefix, voice_infix, voice_suffix)
             if lab == "STEM":
                 gloss_parts.append(gloss_map.get(s.lower(), s))
             elif "VOICE=" in feat:
@@ -211,7 +171,7 @@ def tag_tokens_with_lex(
 
         if base.startswith("="):
             pos_guess = "CLIT"
-        elif any(_tag_segment(s, prefixes, suffixes, infixes)[0] in {"PREF", "INFX", "SUFF"} for s in segs):
+        elif any(_tag_segment(s, prefixes, suffixes, infixes, voice_prefix, voice_infix, voice_suffix)[0] in {"PREF", "INFX", "SUFF"} for s in segs):
             pos_guess = "V"
         else:
             pos_guess = "X"
@@ -223,9 +183,6 @@ def tag_tokens_with_lex(
     return out
 
 
-# ---------------------------------------------------------------------
-# File-level API (CLI helper)
-# ---------------------------------------------------------------------
 def tag_file_tsv(
     infile: Path,
     outfile: Path,
@@ -240,10 +197,13 @@ def tag_file_tsv(
         df = df.copy()
         df["sent_id"] = [f"s{1 + i // 50:03d}" for i in range(len(df))]
 
-    # Load resources
+    # Load resources dynamically
     lex_any = load_lexicon(lexicon_path, return_type="dict")
     lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
-    prefixes, suffixes, infixes = _affix_sets_from_json(load_affixes(affixes_path))
+    
+    affixes_data = load_affixes(affixes_path)
+    prefixes, suffixes, infixes = get_affix_sets(affixes_data)
+    voice_prefix, voice_infix, voice_suffix = get_voice_mappings(affixes_data)
 
     rows = []
     for sent_id, sub in df.groupby("sent_id", sort=False):
@@ -280,7 +240,7 @@ def tag_file_tsv(
                 gloss_parts: List[str] = []
 
                 for s in segs:
-                    lab, feat = _tag_segment(s, prefixes, suffixes, infixes)
+                    lab, feat = _tag_segment(s, prefixes, suffixes, infixes, voice_prefix, voice_infix, voice_suffix)
                     seg_tags.append(f"{s}:{lab}{('['+feat+']') if feat else ''}")
                     if feat.startswith("VOICE="):
                         m = re.search(r"VOICE=([A-Z]+)", feat)

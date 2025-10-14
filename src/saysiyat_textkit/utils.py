@@ -10,6 +10,25 @@ ENV_LEXICON = "SAYSIYAT_LEXICON"
 ENV_AFFIXES = "SAYSIYAT_AFFIXES"
 
 
+def _tqdm(iterable, disable=False, desc: str = ""):
+    """
+    Safe wrapper for tqdm that falls back gracefully if tqdm is not available.
+    
+    Args:
+        iterable: The iterable to wrap
+        disable: Whether to disable the progress bar
+        desc: Description to show in the progress bar
+        
+    Returns:
+        Either a tqdm-wrapped iterable or the original iterable
+    """
+    try:
+        from tqdm.auto import tqdm
+        return tqdm(iterable, disable=disable, desc=desc)
+    except ImportError:
+        return iterable
+    
+
 def _pkg_data_path(filename: str) -> Path:
     """Get path to packaged data file."""
     with ir.as_file(ir.files("saysiyat_textkit") / "data" / filename) as p:
