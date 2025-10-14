@@ -136,11 +136,6 @@ def rerank_candidates(tokens: List[str],
         tmp[i] = cand
         score = 0.0
 
-        # Example hooks (left off by default):
-        # if kenlm_model is not None:
-        #     sent = " ".join(tmp)
-        #     score += kenlm_model.score(sent, bos=True, eos=True)
-
         if ft_model is not None and hasattr(ft_model, "wv"):
             try:
                 vec_c = ft_model.wv[cand] if cand in ft_model.wv else None
@@ -211,7 +206,7 @@ def normalize_tokenize_align_correct(
 
 def normalize_correct_file_to_tsv(
     infile: Path,
-    lexicon_path: Path | None,   # ← None means: use packaged default
+    lexicon_path: Path | None,   # None: use packaged default
     outfile: Path,
 ) -> None:
     lines = Path(infile).read_text(encoding="utf-8").splitlines()

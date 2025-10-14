@@ -258,7 +258,7 @@ def tag_file_tsv(
                     if g:
                         gloss_parts.append(g)
 
-                gloss = "＋".join(gloss_parts)
+                gloss = "+".join(gloss_parts)
                 focus_str = "|".join(sorted(focus_vals)) if focus_vals else ""
                 lemma = lemma_map.get(key, tok)
 
