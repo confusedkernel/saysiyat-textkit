@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Optional
 from pathlib import Path
 
-from .normalization import normalize_correct_file_to_tsv, normalize_text, tokenize
+from .normalization import normalize_correct_file_to_tsv
 from .segmentation import segment_file_tsv
 from .tagging import tag_file_tsv
 
@@ -49,7 +49,6 @@ def segment(
     typer.echo(f"[segment] Wrote: {outfile}")
 
 
-
 @app.command()
 def train_morfessor(
     infile: Path = typer.Option(..., exists=True, help="TSV with a 'token' column (or raw text if --raw-text)."),
@@ -58,13 +57,13 @@ def train_morfessor(
     affixes: Optional[Path] = typer.Option(None, help="Optional affixes JSON."),
     raw_text: bool = typer.Option(False, help="If true, treat infile as raw text, not TSV."),
 ):
-    from .config import load_lexicon, load_affixes
-    from .segmentation import _affix_sets, _train_morfessor_from_tokens_and_lex
-    import re
+    from .utils import load_lexicon, load_affixes
+    from .segmentation import _affix_sets, _train_morfessor_semisupervised
+    from regex import re
 
     aff = load_affixes(str(affixes)) if affixes else {"affix_types": {}}
     prefixes, suffixes, infixes = _affix_sets(aff)
-    lex = load_lexicon(str(lexicon)) if lexicon else None
+    lex = load_lexicon(str(lexicon), return_type="dataframe") if lexicon else None
 
     if raw_text:
         text = Path(infile).read_text(encoding="utf-8")
@@ -73,7 +72,7 @@ def train_morfessor(
         df = pd.read_csv(infile, sep="\\t", dtype=str, keep_default_na=False)
         tokens = df["token"].tolist()
 
-    model = _train_morfessor_from_tokens_and_lex(tokens, lex, prefixes, suffixes, infixes)
+    model = _train_morfessor_semisupervised(tokens, lex, prefixes, suffixes, infixes)
 
     from morfessor import io as mfio
     io = mfio.MorfessorIO()

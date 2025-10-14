@@ -5,8 +5,8 @@ import collections
 import pandas as pd
 import regex as re
 
-from .normalization import normalize_text, tokenize_keep_clitic, load_lexicon
-from .config import load_affixes
+from .normalization import normalize_text, tokenize_keep_clitic
+from .utils import load_lexicon, load_affixes
 
 # ------------------------------ small utils ------------------------------
 def _tqdm(iterable, disable=False, desc: str = ""):

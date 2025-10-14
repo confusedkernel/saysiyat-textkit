@@ -4,9 +4,8 @@ from typing import List, Tuple, Optional, Dict, Any
 import pandas as pd
 import regex as re
 
-# Reuse your packaged loaders
-from .normalization import load_lexicon
-from .config import load_affixes       # supports None => built-in data/affixes.json
+
+from .utils import load_lexicon, load_affixes      # supports None => built-in data/affixes.json
 
 # ---------------------------------------------------------------------
 # Affix inventory & helpers (VOICE table from your earlier spec)
@@ -67,6 +66,7 @@ def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict
         form_col  = cols.get("form")  or cols.get("token_corr") or cols.get("token")
         lemma_col = cols.get("lemma")
         gloss_col = cols.get("gloss") or cols.get("zh")
+        pos_col   = cols.get("pos")
 
         def series_or_empty(c):
             return df[c].astype(str) if c in df.columns else pd.Series([""] * len(df))
@@ -174,7 +174,7 @@ def tag_tokens_with_lex(
     lexicon_path: Optional[str] = None,
     affixes_path: Optional[str] = None,
 ) -> List[Tuple[str, str, str]]:
-    lex_any = load_lexicon(lexicon_path)
+    lex_any = load_lexicon(lexicon_path, return_type="dict")
     lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
 
     prefixes, suffixes, infixes = _affix_sets_from_json(load_affixes(affixes_path))
@@ -241,7 +241,7 @@ def tag_file_tsv(
         df["sent_id"] = [f"s{1 + i // 50:03d}" for i in range(len(df))]
 
     # Load resources
-    lex_any = load_lexicon(lexicon_path)
+    lex_any = load_lexicon(lexicon_path, return_type="dict")
     lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
     prefixes, suffixes, infixes = _affix_sets_from_json(load_affixes(affixes_path))
 

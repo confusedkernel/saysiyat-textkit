@@ -1,75 +1,10 @@
 from __future__ import annotations
-from typing import List, Iterable, Tuple, Optional, Dict, Any
+from typing import List, Dict, Any
 from pathlib import Path
 import unicodedata as ud
-import pandas as pd
-import regex as re  # unicode-aware (\p{})
+import regex as re
 
-from importlib import resources
-
-
-def _open_pkg_data(rel: str):
-    return resources.files("saysiyat_textkit").joinpath(f"data/{rel}").open("r", encoding="utf-8")
-
-
-def load_lexicon(path: Path | str | None) -> dict[str, dict]:
-    """
-    Load TSV lexicon into a dict:
-      form -> {lemma, freq, seg, pos, gloss}
-    Columns can be in any order. `pos` is optional (kept as "" if missing).
-    If `path is None`, the bundled data/lexicon.tsv is used.
-    """
-    if path is None:
-        f = _open_pkg_data("lexicon.tsv")
-    else:
-        f = Path(path).open("r", encoding="utf-8")
-
-    lex: dict[str, dict] = {}
-    with f as fh:
-        header = fh.readline().rstrip("\n").split("\t")
-        # allow both old and new schemas; only take what exists
-        wanted = ["form", "lemma", "freq", "seg", "POS", "gloss"]
-        idx = {name: header.index(name) for name in wanted if name in header}
-
-        for line in fh:
-            if not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-
-            def g(name: str) -> str:
-                i = idx.get(name)
-                return cols[i] if (i is not None) else ""
-
-            form = g("form")
-            if not form:
-                continue
-
-            lemma = g("lemma") or form
-
-            # freq: keep "" if empty; else parse to int (allow "12.0")
-            freq_raw = g("freq")
-            if freq_raw == "":
-                freq = ""
-            else:
-                try:
-                    freq = int(float(freq_raw))
-                except Exception:
-                    freq = ""
-
-            seg = g("seg")
-            pos = g("POS")    # "" if column missing
-            gloss = g("gloss")
-
-            lex[form] = {
-                "lemma": lemma,
-                "freq": freq,
-                "seg": seg,
-                "pos": pos,
-                "gloss": gloss,
-            }
-
-    return lex
-
+from .utils import load_lexicon
 
 def normalize_text(
     s: str,
@@ -280,7 +215,7 @@ def normalize_correct_file_to_tsv(
     outfile: Path,
 ) -> None:
     lines = Path(infile).read_text(encoding="utf-8").splitlines()
-    lexicon = load_lexicon(lexicon_path)  # None → built-in data/lexicon.tsv
+    lexicon = load_lexicon(lexicon_path, return_type="dict")
     out = normalize_tokenize_align_correct(
         lines, lexicon, kenlm_model=None, ft_model=None)
 

@@ -3,35 +3,35 @@
     "m-": {
       "type": "prefix",
       "features": {
-        "VOICE": "AF",
+        "VOICE": "AV",
         "POL": "I"
       }
     },
     "-om-": {
       "type": "infix",
       "features": {
-        "VOICE": "AF",
+        "VOICE": "AV",
         "POL": "I"
       }
     },
     "ma-": {
       "type": "prefix",
       "features": {
-        "VOICE": "AF",
+        "VOICE": "AV",
         "POL": "I"
       }
     },
     "-en": {
       "type": "suffix",
       "features": {
-        "VOICE": "PF",
+        "VOICE": "PV",
         "POL": "I"
       }
     },
     "-i": {
       "type": "suffix",
       "features": {
-        "VOICE": "PF",
+        "VOICE": "PV",
         "POL": "II"
       }
     },
@@ -45,14 +45,14 @@
     "si-": {
       "type": "prefix",
       "features": {
-        "VOICE": "IF",
+        "VOICE": "IV",
         "POL": "I"
       }
     },
     "-ani": {
       "type": "suffix",
       "features": {
-        "VOICE": "IF",
+        "VOICE": "IV",
         "POL": "II"
       }
     }
