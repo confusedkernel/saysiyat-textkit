@@ -51,11 +51,10 @@ def normalize_text(
 
 # Segmentation rule:
 # - keep '=' as its own token (so clitic boundary is explicit)
-# - allow letters and U+02BC (ʼ) as part of words
+# - allow letters and U+02BC (') as part of words
 TOKEN_RE_KEEP_CLITIC = re.compile(
     r"[A-Za-z\u00C0-\u024F\u02BC]+|=|[0-9]+|[-]+|[^\s]"
 )
-
 
 def tokenize_keep_clitic(s: str) -> List[str]:
     return [m.group(0) for m in TOKEN_RE_KEEP_CLITIC.finditer(s)]
@@ -181,7 +180,7 @@ def normalize_tokenize_align_correct(
     for line in lines:
         orth = line.rstrip("\n")
         norm = normalize_text(orth, lowercase=True, keep_diacritics=True)
-        tokens = [m.group(0) for m in re.finditer(r"[^\s]+", orth)]
+        tokens = [m.group(0) for m in re.finditer(r"[A-Za-z\u00C0-\u024F\u02BC=]+|[0-9]+|[-]+|[^\s]", orth)]
         norm_tokens = tokenize_keep_clitic(norm)
 
         corrected = norm_tokens[:]
