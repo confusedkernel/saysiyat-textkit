@@ -29,7 +29,7 @@ stk tag --infile segments.tsv --outfile tagged.tsv
 ## Python API usage
 
 ```python
-from saysiyat_textkit import normalization, segmentation, tagging
+from stk import normalization, segmentation, tagging
 
 # Normalization+tokenization
 tokens = normalization.normalize_and_tokenize("Makat 'sa=miq ta'   kiso.")
