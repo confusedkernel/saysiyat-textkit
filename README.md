@@ -4,7 +4,7 @@ A small, installable package with both **Python API** and **CLI** for a 3‑stag
 
 1. **Normalization & Tokenization** (`normalize`): NFC normalization, clitic‑aware regex tokenization.
 2. **Morphological Segmentation** (`segment`): Wraps Morfessor if a model is provided, otherwise uses a tiny fallback heuristic.
-3. **Tagging** (`tag`): Minimal demonstrator rule‑based tagger (edit to your spec).
+3. **Tagging** (`tag`): Minimal demonstrator rule‑based tagger (editable to your spec).
 4. **Pipeline**(`pipeline`): Run the entire pipeline in one go.
 
 ## Installation
