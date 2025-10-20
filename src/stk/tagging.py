@@ -10,12 +10,12 @@ from .utils import load_lexicon, load_affixes, get_affix_sets, get_voice_mapping
 def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
     """
     Accept dict[str, dict] or a DataFrame. Return (lemma_map, gloss_map, pos_map)
-    with LOWERCASED keys.
+    Keys preserve case since S/s are distinct letters in Saysiyat.
     """
     if isinstance(lex_any, dict):
-        lemma_map = {k.lower(): str(v.get("lemma", "") or k) for k, v in lex_any.items()}
-        gloss_map = {k.lower(): str(v.get("gloss", "") or "") for k, v in lex_any.items()}
-        pos_map   = {k.lower(): str(v.get("pos",   "") or "") for k, v in lex_any.items()}
+        lemma_map = {k: str(v.get("lemma", "") or k) for k, v in lex_any.items()}
+        gloss_map = {k: str(v.get("gloss", "") or "") for k, v in lex_any.items()}
+        pos_map   = {k: str(v.get("pos",   "") or "") for k, v in lex_any.items()}
         return lemma_map, gloss_map, pos_map
 
     # DataFrame branch
@@ -44,7 +44,7 @@ def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict
         gloss_map = {}
         pos_map   = {}
         for f, l, g, p in zip(form, lemma, gloss, pos):
-            k = str(f).lower()
+            k = str(f)  # Don't lowercase! S/s are distinct in Saysiyat
             lemma_map[k] = str(l) if str(l).strip() else f
             gloss_map[k] = str(g) if str(g).strip() else ""
             pos_map[k]   = str(p) if str(p).strip() else ""
@@ -52,6 +52,60 @@ def _lexicon_to_maps(lex_any: Any) -> Tuple[Dict[str, str], Dict[str, str], Dict
 
     # Unknown type
     return {}, {}, {}
+
+
+def reconstruct_om_infix_stem(tok: str, lemma_map: Dict[str, str]) -> Tuple[str, bool]:
+    """
+    Reconstruct the original stem from a word with -om- infix.
+    
+    In Saysiyat, -om- replaces the first vowel after the first consonant.
+    E.g., Sombet -> Sebet (S + e + bet, where -om- replaced the 'e')
+    Note: S (uppercase) in Saysiyat is a different letter from s (lowercase)
+    
+    Returns: (reconstructed_stem, was_reconstructed)
+    """
+    om_pattern = re.search(r'om', tok, re.IGNORECASE)
+    if not om_pattern:
+        return tok, False
+    
+    om_idx = om_pattern.start()
+    
+    if om_idx < 1:
+        return tok, False
+    
+    pre_om = tok[:om_idx]
+    post_om = tok[om_idx+2:] 
+    
+    vowels = ['ae', 'oe', 'a', 'e', 'i', 'o']  # Try digraphs first, then single vowels
+    
+    for vowel in vowels:
+        candidate = pre_om + vowel + post_om
+        if candidate in lemma_map:
+            return candidate, True
+    
+    # If no match found, return the form without -om- but with 'e' as default
+    return pre_om + 'e' + post_om, True
+
+
+def get_lemma_for_om_verb(tok: str, lemma_map: Dict[str, str]) -> str:
+    """
+    Get the correct lemma for a verb with -om- infix.
+    
+    Example: Sombet -> Sebet (the lemma form)
+    Note: Preserves case - S is distinct from s in Saysiyat
+    """
+    if tok in lemma_map:
+        return lemma_map[tok]
+    
+    reconstructed, was_found = reconstruct_om_infix_stem(tok, lemma_map)
+    
+    if was_found and reconstructed in lemma_map:
+        return lemma_map[reconstructed]
+    
+    if was_found:
+        return reconstructed
+
+    return tok
 
 
 def _heuristic_segment_for_tagging(tok: str,
@@ -142,26 +196,39 @@ def tag_tokens_with_lex(
     out: List[Tuple[str, str, str]] = []
     for tok in corr_tokens:
         base = (tok or "").strip()
-        key = base.lower()
+        key = base 
 
         lex_pos = (pos_map.get(key, "") or "").strip()
 
         if lex_pos:
-            # Word has POS in lexicon - use it directly, no guessing
+            # Word has POS in lexicon: use it directly
             lemma = (lemma_map.get(key) or base)
             gloss = (gloss_map.get(key) or "")
             out.append((lex_pos, lemma, gloss))
             continue
 
-        # No POS in lexicon → heuristic analysis
+        # No POS in lexicon: heuristic analysis only
         segs = _heuristic_segment_for_tagging(base, prefixes, suffixes, infixes)
 
         # Compose gloss parts & decide coarse POS
         gloss_parts: List[str] = []
+        has_om_infix = any(s.lower() == "om" for s in segs)
+        
         for s in segs:
             lab, feat = _tag_segment(s, prefixes, suffixes, infixes, voice_prefix, voice_infix, voice_suffix)
             if lab == "STEM":
-                gloss_parts.append(gloss_map.get(s.lower(), s))
+                if has_om_infix:
+                    reconstructed_stem, _ = reconstruct_om_infix_stem(key, lemma_map)
+                    gloss_parts.append(gloss_map.get(reconstructed_stem, gloss_map.get(s, s)))
+                else:
+                    gloss_parts.append(gloss_map.get(s, s))
+            elif lab == "INFX" and s.lower() == "om":
+                if "VOICE=" in feat:
+                    m = re.search(r"VOICE=([A-Z]+)", feat)
+                    if m:
+                        gloss_parts.append(f"{s} (VOICE: {m.group(1)})")
+                else:
+                    gloss_parts.append(s)
             elif "VOICE=" in feat:
                 m = re.search(r"VOICE=([A-Z]+)", feat)
                 if m:
@@ -176,7 +243,12 @@ def tag_tokens_with_lex(
         else:
             pos_guess = "X"
 
-        lemma = lemma_map.get(key, base)
+        # Get lemma - use reconstruction for -om- verbs
+        if has_om_infix and re.search(r'om', key, re.IGNORECASE):
+            lemma = get_lemma_for_om_verb(key, lemma_map)
+        else:
+            lemma = lemma_map.get(key, base)
+            
         gloss = "＋".join(gloss_parts)
         out.append((pos_guess, lemma, gloss))
 
@@ -212,7 +284,7 @@ def tag_file_tsv(
             if not tok or tok.isspace():
                 continue
 
-            key = tok.lower()
+            key = tok 
             lex_pos = (pos_map.get(key, "") or "").strip()
 
             if lex_pos:
@@ -233,11 +305,12 @@ def tag_file_tsv(
                     seg_tags = [f"{tok}:STEM"]
                     focus_str = ""
             else:
-                # No POS in lexicon → heuristic analysis only
                 segs = _heuristic_segment_for_tagging(tok, prefixes, suffixes, infixes)
                 seg_tags: List[str] = []
                 focus_vals = set()
                 gloss_parts: List[str] = []
+                
+                has_om_infix = any(s.lower() == "om" for s in segs)
 
                 for s in segs:
                     lab, feat = _tag_segment(s, prefixes, suffixes, infixes, voice_prefix, voice_infix, voice_suffix)
@@ -246,9 +319,21 @@ def tag_file_tsv(
                         m = re.search(r"VOICE=([A-Z]+)", feat)
                         if m:
                             focus_vals.add(m.group(1))
+                    
                     g = ""
                     if lab == "STEM":
-                        g = gloss_map.get(s.lower(), s)
+                        if has_om_infix:
+                            reconstructed_stem, _ = reconstruct_om_infix_stem(key, lemma_map)
+                            g = gloss_map.get(reconstructed_stem, gloss_map.get(s, s))
+                        else:
+                            g = gloss_map.get(s, s)
+                    elif lab == "INFX" and s.lower() == "om":
+                        if "VOICE" in feat:
+                            m = re.search(r"VOICE=([A-Z]+)", feat)
+                            if m:
+                                g = f"{s} (VOICE: {m.group(1)})"
+                        else:
+                            g = s
                     elif "VOICE" in feat:
                         m = re.search(r"VOICE=([A-Z]+)", feat)
                         if m:
@@ -260,7 +345,12 @@ def tag_file_tsv(
 
                 gloss = "+".join(gloss_parts)
                 focus_str = "|".join(sorted(focus_vals)) if focus_vals else ""
-                lemma = lemma_map.get(key, tok)
+                
+                # Get lemma - use reconstruction for -om- verbs
+                if has_om_infix and re.search(r'om', key, re.IGNORECASE):
+                    lemma = get_lemma_for_om_verb(key, lemma_map)
+                else:
+                    lemma = lemma_map.get(key, tok)
 
                 # POS guessing only when no lexicon POS exists
                 if tok.startswith("="):
