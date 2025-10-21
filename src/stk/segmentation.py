@@ -53,9 +53,10 @@ def _train_morfessor_semisupervised(
     tokens: List[str],
     lex_df: Optional[pd.DataFrame],
     prefixes: set, suffixes: set, infixes: set,
-    show_progress: bool = True,
+    hide_progress: bool = False,
 ):
     import morfessor
+    
     pat = re.compile(r"^[A-Za-z\u00C0-\u024F\u02BC-]+$")
 
     if isinstance(lex_df, pd.DataFrame) and {"form","freq"} <= set(lex_df.columns):
@@ -76,7 +77,7 @@ def _train_morfessor_semisupervised(
         if isinstance(lex_df, pd.DataFrame) and "form" in lex_df.columns
         else [w for _, w in sorted(data, key=lambda t: -t[0])[:2000]]
     )
-    for w in _tqdm(source, disable=not show_progress, desc="Affix annotations"):
+    for w in _tqdm(source, disable=False, desc="Affix annotations"):
         hs = _heuristic_split(w, prefixes, suffixes, infixes)
         if len(hs) > 1:
             annotations[w] = [tuple(hs)]
@@ -182,7 +183,7 @@ def _segment_core(
     lexicon_path: Optional[str],
     affixes_path: Optional[str],
     allow_train_if_missing: bool,
-    show_progress: bool,
+    hide_progress: bool,
     save_model_path: Optional[str],
 ):
     """
@@ -215,7 +216,7 @@ def _segment_core(
     else:
         if not allow_train_if_missing:
             raise RuntimeError("Morfessor model required (allow_train_if_missing=False).")
-        model = _train_morfessor_semisupervised(tokens, lex_df, prefixes, suffixes, infixes, show_progress=show_progress)
+        model = _train_morfessor_semisupervised(tokens, lex_df, prefixes, suffixes, infixes, hide_progress=hide_progress)
         if save_model_path:
             from morfessor import io as mfio
             mfio.MorfessorIO().write_binary_model_file(str(save_model_path), model)
@@ -232,7 +233,7 @@ def _segment_core(
     # -- base segmentation (no correction) --
     pat_word = re.compile(r"^[A-Za-z\u00C0-\u024F\u02BC-]+$")
     base_parts: List[List[str]] = []
-    for tok in _tqdm(tokens, disable=not show_progress, desc="Morfessor segment"):
+    for tok in _tqdm(tokens, disable=False, desc="Morfessor segment"):
         tok = str(tok)
         if tok in seg_override and seg_override[tok]:
             parts = seg_override[tok].split()
@@ -253,7 +254,7 @@ def segment_tokens(
     affixes_path: Optional[str] = None,
     allow_train_if_missing: bool = True,
     with_correction: bool = True,
-    show_progress: bool = False,
+    hide_progress: bool = False,
     save_model_path: Optional[str] = None,
     pretty_affixes: bool = True,
     return_df: bool = False,     # <- set True to get the exact same columns as segment_file_tsv()
@@ -279,7 +280,7 @@ def segment_tokens(
         lexicon_path=lexicon_path,
         affixes_path=affixes_path,
         allow_train_if_missing=allow_train_if_missing,
-        show_progress=show_progress,
+        hide_progress=hide_progress,
         save_model_path=save_model_path,
     )
 
@@ -303,7 +304,7 @@ def segment_tokens(
         affix_set = set(prefixes) | set(suffixes) | set(infixes)
 
         corr_parts: List[List[str]] = []
-        for parts in _tqdm(base_parts, disable=not show_progress, desc="Correction"):
+        for parts in _tqdm(base_parts, disable=hide_progress, desc="Correction"):
             fixed = [_correct_segment(p, ss, lex_set, form2freq, affix_set) for p in parts]
             corr_parts.append(fixed)
 
@@ -342,7 +343,7 @@ def segment_file_tsv(
     affixes_path: Optional[str] = None,
     allow_train_if_missing: bool = True,
     with_correction: bool = True,
-    show_progress: bool = True,
+    hide_progress: bool = False,
     save_model_path: Optional[str] = None,
     pretty_affixes: bool = True,
 ) -> None:
@@ -409,7 +410,7 @@ def segment_file_tsv(
         lexicon_path=lexicon_path,
         affixes_path=affixes_path,
         allow_train_if_missing=allow_train_if_missing,
-        show_progress=show_progress,
+        hide_progress=hide_progress,
         save_model_path=save_model_path,
     )
 

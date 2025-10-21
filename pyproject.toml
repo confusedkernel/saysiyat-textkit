@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stk"
-version = "0.1.0"
+version = "0.1.1"
 description = "saysiyat corpus pipeline: normalization, tokenization, morphological segmentation, and tagging."
 authors = [{name = "Tyler Yeh"}]
 readme = "README.md"

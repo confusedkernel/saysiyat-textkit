@@ -23,7 +23,7 @@ def _tqdm(iterable, disable=False, desc: str = ""):
         Either a tqdm-wrapped iterable or the original iterable
     """
     try:
-        from tqdm.auto import tqdm
+        from tqdm import tqdm
         return tqdm(iterable, disable=disable, desc=desc)
     except ImportError:
         return iterable

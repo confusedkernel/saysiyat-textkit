@@ -59,7 +59,7 @@ def run_pipeline_from_text(
         affixes_path=affixes_path,     # None => packaged
         allow_train_if_missing=True,
         with_correction=True,          # we want corr_* for tagging
-        show_progress=False,
+        hide_progress=False,
         save_model_path=None,
         pretty_affixes=True,
     )

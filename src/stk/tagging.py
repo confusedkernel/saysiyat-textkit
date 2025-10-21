@@ -64,22 +64,29 @@ def reconstruct_om_infix_stem(tok: str, lemma_map: Dict[str, str]) -> Tuple[str,
     
     Returns: (reconstructed_stem, was_reconstructed)
     """
+    # Don't lowercase - S is a distinct letter in Saysiyat!
+    # Search case-insensitively for 'om' pattern
     om_pattern = re.search(r'om', tok, re.IGNORECASE)
     if not om_pattern:
         return tok, False
     
     om_idx = om_pattern.start()
     
+    # -om- should come after at least one consonant
     if om_idx < 1:
         return tok, False
     
-    pre_om = tok[:om_idx]
-    post_om = tok[om_idx+2:] 
+    # Get the parts: C + om + rest (preserve original case)
+    pre_om = tok[:om_idx]  # consonant(s) before -om-
+    post_om = tok[om_idx+2:]  # everything after -om-
     
+    # Try to find the original form in lexicon by testing possible vowels
+    # Saysiyat vowels: a, ae, e, i, o, oe
     vowels = ['ae', 'oe', 'a', 'e', 'i', 'o']  # Try digraphs first, then single vowels
     
     for vowel in vowels:
         candidate = pre_om + vowel + post_om
+        # Try both direct lookup and case variations
         if candidate in lemma_map:
             return candidate, True
     
@@ -94,17 +101,21 @@ def get_lemma_for_om_verb(tok: str, lemma_map: Dict[str, str]) -> str:
     Example: Sombet -> Sebet (the lemma form)
     Note: Preserves case - S is distinct from s in Saysiyat
     """
+    # First try direct lookup (no case conversion)
     if tok in lemma_map:
         return lemma_map[tok]
     
+    # Try reconstructing from -om- infix
     reconstructed, was_found = reconstruct_om_infix_stem(tok, lemma_map)
     
     if was_found and reconstructed in lemma_map:
         return lemma_map[reconstructed]
     
+    # Return the reconstructed form even if not in lexicon
     if was_found:
         return reconstructed
-
+    
+    # Default: return the token itself
     return tok
 
 
@@ -188,7 +199,6 @@ def tag_tokens_with_lex(
     lex_any = load_lexicon(lexicon_path, return_type="dict")
     lemma_map, gloss_map, pos_map = _lexicon_to_maps(lex_any)
 
-    # Load affixes dynamically from JSON
     affixes_data = load_affixes(affixes_path)
     prefixes, suffixes, infixes = get_affix_sets(affixes_data)
     voice_prefix, voice_infix, voice_suffix = get_voice_mappings(affixes_data)
@@ -201,13 +211,11 @@ def tag_tokens_with_lex(
         lex_pos = (pos_map.get(key, "") or "").strip()
 
         if lex_pos:
-            # Word has POS in lexicon: use it directly
             lemma = (lemma_map.get(key) or base)
             gloss = (gloss_map.get(key) or "")
             out.append((lex_pos, lemma, gloss))
             continue
 
-        # No POS in lexicon: heuristic analysis only
         segs = _heuristic_segment_for_tagging(base, prefixes, suffixes, infixes)
 
         # Compose gloss parts & decide coarse POS
@@ -217,11 +225,15 @@ def tag_tokens_with_lex(
         for s in segs:
             lab, feat = _tag_segment(s, prefixes, suffixes, infixes, voice_prefix, voice_infix, voice_suffix)
             if lab == "STEM":
+                # For stems in -om- words, get gloss from reconstructed form
                 if has_om_infix:
                     reconstructed_stem, _ = reconstruct_om_infix_stem(key, lemma_map)
-                    gloss_parts.append(gloss_map.get(reconstructed_stem, gloss_map.get(s, s)))
+                    stem_gloss = gloss_map.get(reconstructed_stem, gloss_map.get(s, ""))
+                    # If no gloss found, use the raw segment
+                    gloss_parts.append(stem_gloss if stem_gloss else s)
                 else:
-                    gloss_parts.append(gloss_map.get(s, s))
+                    stem_gloss = gloss_map.get(s, "")
+                    gloss_parts.append(stem_gloss if stem_gloss else s)
             elif lab == "INFX" and s.lower() == "om":
                 if "VOICE=" in feat:
                     m = re.search(r"VOICE=([A-Z]+)", feat)
@@ -249,7 +261,7 @@ def tag_tokens_with_lex(
         else:
             lemma = lemma_map.get(key, base)
             
-        gloss = "＋".join(gloss_parts)
+        gloss = "+".join(gloss_parts)
         out.append((pos_guess, lemma, gloss))
 
     return out
@@ -284,7 +296,7 @@ def tag_file_tsv(
             if not tok or tok.isspace():
                 continue
 
-            key = tok 
+            key = tok
             lex_pos = (pos_map.get(key, "") or "").strip()
 
             if lex_pos:
@@ -293,9 +305,8 @@ def tag_file_tsv(
                 gloss = gloss_map.get(key, "")
                 pos = lex_pos
                 
-                # Skip segmentation for nouns (and any other word with a POS)
+                # Skip segmentation for nouns 
                 if lex_pos.upper() in ["N", "NOUN"]:
-                    # No segmentation for nouns
                     segs = [tok]
                     seg_tags = [f"{tok}:STEM"]
                     focus_str = ""
@@ -310,6 +321,7 @@ def tag_file_tsv(
                 focus_vals = set()
                 gloss_parts: List[str] = []
                 
+                # Check if this word has -om- infix first
                 has_om_infix = any(s.lower() == "om" for s in segs)
 
                 for s in segs:
@@ -324,9 +336,12 @@ def tag_file_tsv(
                     if lab == "STEM":
                         if has_om_infix:
                             reconstructed_stem, _ = reconstruct_om_infix_stem(key, lemma_map)
-                            g = gloss_map.get(reconstructed_stem, gloss_map.get(s, s))
+                            stem_gloss = gloss_map.get(reconstructed_stem, gloss_map.get(s, ""))
+                            # If no gloss found, use the raw segment
+                            g = stem_gloss if stem_gloss else s
                         else:
-                            g = gloss_map.get(s, s)
+                            stem_gloss = gloss_map.get(s, "")
+                            g = stem_gloss if stem_gloss else s
                     elif lab == "INFX" and s.lower() == "om":
                         if "VOICE" in feat:
                             m = re.search(r"VOICE=([A-Z]+)", feat)
@@ -346,7 +361,6 @@ def tag_file_tsv(
                 gloss = "+".join(gloss_parts)
                 focus_str = "|".join(sorted(focus_vals)) if focus_vals else ""
                 
-                # Get lemma - use reconstruction for -om- verbs
                 if has_om_infix and re.search(r'om', key, re.IGNORECASE):
                     lemma = get_lemma_for_om_verb(key, lemma_map)
                 else:
